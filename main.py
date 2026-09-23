@@ -33,7 +33,10 @@ app = FastAPI()
 security = HTTPBearer(auto_error=False)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -89,6 +92,7 @@ def get_current_user(
 
     return user
 
+
 @app.get("/me")
 def get_my_profile(
     current_user: models.User = Depends(get_current_user)
@@ -99,6 +103,7 @@ def get_my_profile(
         "email": current_user.email,
         "role": current_user.role
     }
+
 
 @app.post("/login")
 def login(
