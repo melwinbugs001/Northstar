@@ -31,16 +31,12 @@ gemini_client = genai.Client(
 
 app = FastAPI()
 security = HTTPBearer(auto_error=False)
-
-allowed_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://127.0.0.1:5175,http://localhost:5175"
-)
-origins = [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,16 +92,6 @@ def get_current_user(
 
     return user
 
-def get_current_admin(
-    current_user: models.User = Depends(get_current_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access required"
-        )
-
-    return current_user
 
 @app.get("/me")
 def get_my_profile(
@@ -155,135 +141,35 @@ def login(
         "token_type": "bearer"
     }
 
-@app.get("/admin/users")
-def get_admin_users(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_admin)
+@app.post("/users")
+def create_user(
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db)
 ):
-    users = db.query(models.User).all()
+    new_user = models.User(
+        name=user.name,
+        email=user.email,
+        password=hash_password(user.password),
+        role=user.role
+    )
 
-    return [
-        {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-            "role": user.role
-        }
-        for user in users
-    ]
+    if db.query(models.User).filter(models.User.email == user.email).first():
+        raise HTTPException(status_code=409, detail="Email is already registered")
 
-
-@app.get("/admin/users/{user_id}")
-def get_admin_user(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_admin)
-):
-    user = db.query(models.User).filter(
-        models.User.id == user_id
-    ).first()
-
-    if user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
+    db.add(new_user)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email is already registered")
+    db.refresh(new_user)
 
     return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "role": user.role
+        "id": new_user.id,
+        "name": new_user.name,
+        "email": new_user.email,
+        "role": new_user.role
     }
-
-
-@app.put("/admin/users/{user_id}")
-def update_admin_user(
-    user_id: int,
-    user: schemas.UserUpdate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_admin)
-):
-    existing_user = db.query(models.User).filter(
-        models.User.id == user_id
-    ).first()
-
-    if existing_user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-
-    if db.query(models.User).filter(
-        models.User.email == user.email,
-        models.User.id != user_id
-    ).first():
-        raise HTTPException(
-            status_code=409,
-            detail="Email is already registered"
-        )
-
-    existing_user.name = user.name
-    existing_user.email = user.email
-    existing_user.role = user.role
-
-    db.commit()
-    db.refresh(existing_user)
-
-    return {
-        "id": existing_user.id,
-        "name": existing_user.name,
-        "email": existing_user.email,
-        "role": existing_user.role
-    }
-
-
-@app.delete("/admin/users/{user_id}")
-def delete_admin_user(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_admin)
-):
-    existing_user = db.query(models.User).filter(
-        models.User.id == user_id
-    ).first()
-
-    if existing_user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
-
-    db.delete(existing_user)
-    db.commit()
-
-    return {
-        "message": "User deleted successfully"
-    }
-
-
-@app.get("/admin/applications")
-def get_admin_applications(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_admin)
-):
-    applications = db.query(models.Application).all()
-
-    return [
-        {
-            "id": application.id,
-            "job_id": application.job_id,
-            "user_id": application.user_id,
-            "status": application.status,
-            "resume": application.resume,
-            "user_name": application.user.name if application.user else None,
-            "user_email": application.user.email if application.user else None,
-            "job_title": application.job.title if application.job else None,
-            "company": application.job.company if application.job else None,
-        }
-        for application in applications
-    ]
-
 
 @app.post("/jobs")
 def create_job(
@@ -312,85 +198,6 @@ def create_job(
 
     return new_job
 
-@app.post("/setup-admin")
-def setup_admin(
-    user: schemas.AdminUserCreate,
-    db: Session = Depends(get_db)
-):
-    existing_admin = db.query(models.User).filter(
-        models.User.role == "admin"
-    ).first()
-
-    if existing_admin:
-        raise HTTPException(
-            status_code=403,
-            detail="Admin already exists"
-        )
-
-    if db.query(models.User).filter(
-        models.User.email == user.email
-    ).first():
-        raise HTTPException(
-            status_code=409,
-            detail="Email is already registered"
-        )
-
-    new_admin = models.User(
-        name=user.name,
-        email=user.email,
-        password=hash_password(user.password),
-        role="admin"
-    )
-
-    db.add(new_admin)
-    db.commit()
-    db.refresh(new_admin)
-
-    return {
-        "message": "Admin created successfully",
-        "id": new_admin.id,
-        "name": new_admin.name,
-        "email": new_admin.email,
-        "role": new_admin.role
-    }
-@app.get("/debug-admin")
-def debug_admin(db: Session = Depends(get_db)):
-    admins = db.query(models.User).filter(
-        models.User.role == "admin"
-    ).all()
-
-    return [
-        {
-            "id": admin.id,
-            "name": admin.name,
-            "email": admin.email,
-            "role": admin.role
-        }
-        for admin in admins
-    ]
-
-@app.put("/debug-reset-admin-password")
-def reset_admin_password(
-    db: Session = Depends(get_db)
-):
-    admin = db.query(models.User).filter(
-        models.User.id == 8,
-        models.User.role == "admin"
-    ).first()
-
-    if admin is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Admin not found"
-        )
-
-    admin.password = hash_password("Admin@12345")
-
-    db.commit()
-
-    return {
-        "message": "Admin password reset successfully"
-    }
 @app.get("/users")
 def get_users(
     db: Session = Depends(get_db),
@@ -1106,7 +913,21 @@ def get_user_applications(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    return user.applications
+    applications = db.query(models.Application).filter(
+        models.Application.user_id == user_id
+    ).join(models.Job, models.Job.id == models.Application.job_id).all()
+
+    return [
+        {
+            "id": application.id,
+            "job_id": application.job_id,
+            "job_title": application.job.title,
+            "company": application.job.company,
+            "location": application.job.location,
+            "status": application.status,
+        }
+        for application in applications
+    ]
 
 @app.get("/applications/{application_id}/details")
 def get_application_details(
