@@ -913,7 +913,21 @@ def get_user_applications(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    return user.applications
+    applications = db.query(models.Application).filter(
+        models.Application.user_id == user_id
+    ).join(models.Job, models.Job.id == models.Application.job_id).all()
+
+    return [
+        {
+            "id": application.id,
+            "job_id": application.job_id,
+            "job_title": application.job.title,
+            "company": application.job.company,
+            "location": application.job.location,
+            "status": application.status,
+        }
+        for application in applications
+    ]
 
 @app.get("/applications/{application_id}/details")
 def get_application_details(

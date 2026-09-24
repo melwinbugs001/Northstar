@@ -14,7 +14,6 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8)
     role: Literal["job_seeker", "recruiter"] = "job_seeker"
 
-
 class UserUpdate(BaseModel):
     name: str = Field(min_length=2)
     email: EmailStr
