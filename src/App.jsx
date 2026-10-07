@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import "./App.css"
 import { buildDashboardStats } from "./dashboardUtils"
+import { isAdminRoleAllowed } from "./adminAccess"
 import { API_BASE_URL } from "./config"
 
 const PAGE_SIZE = 6
@@ -173,6 +174,35 @@ function App() {
       return
     }
 
+    try {
+      const meResponse = await fetch(`${API_BASE_URL}/me`, {
+        headers: {
+          Authorization: `Bearer ${getToken()}`,
+        },
+      })
+
+      if (!meResponse.ok) {
+        throw new Error("Session expired. Please log in again.")
+      }
+
+      const profile = await meResponse.json()
+
+      if (!isAdminRoleAllowed(profile?.role)) {
+        localStorage.removeItem("admin_token")
+        setLoggedIn(false)
+        setUsers([])
+        setJobs([])
+        setApplications([])
+        setMessage("Recruiters are not allowed to access the admin panel.")
+        return
+      }
+    } catch (error) {
+      localStorage.removeItem("admin_token")
+      setLoggedIn(false)
+      setMessage(getErrorMessage(error))
+      return
+    }
+
     setMessage("")
 
     try {
@@ -227,11 +257,29 @@ function App() {
         throw new Error("Authentication response did not include a token.")
       }
 
+      const profileResponse = await fetch(`${API_BASE_URL}/me`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (!profileResponse.ok) {
+        throw new Error("Unable to verify admin access.")
+      }
+
+      const profile = await profileResponse.json()
+
+      if (!isAdminRoleAllowed(profile?.role)) {
+        throw new Error("Recruiters are not allowed to access the admin panel.")
+      }
+
       localStorage.setItem("admin_token", token)
       setLoggedIn(true)
       setMessage("")
       setPassword("")
     } catch (error) {
+      localStorage.removeItem("admin_token")
+      setLoggedIn(false)
       setMessage(getErrorMessage(error))
     }
   }

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Bookmark, BriefcaseBusiness, Check, FileUp, MapPin, Search, Sparkles, UserRound, Users, X } from 'lucide-react';
+import './ai.css';
+import { buildRecommendedJobsSummary } from '../../src/dashboardUtils';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 const heroImage = 'https://images.unsplash.com/photo-1556761175-b413da4baf72?auto=format&fit=crop&w=1400&q=85';
@@ -31,18 +33,52 @@ export default function App() {
   const [resume, setResume] = useState(null);
   const [applying, setApplying] = useState(false);
   const [recruiterJobs, setRecruiterJobs] = useState([]);
+  const [recommendedJobs, setRecommendedJobs] = useState([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [reviewingJob, setReviewingJob] = useState(null);
   const [jobApplications, setJobApplications] = useState([]);
   const [newJob, setNewJob] = useState({ title: '', description: '', company: '', location: '', salary: '' });
+
+  async function loadRecommendations(token) {
+    if (!token) return;
+
+    setRecommendationsLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/recommended-jobs?min_match=50`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) {
+        if (response.status === 404) {
+          setRecommendedJobs([]);
+          return;
+        }
+        throw new Error('Could not load AI recommendations.');
+      }
+
+      const data = await response.json();
+      setRecommendedJobs(data.recommendations || []);
+    } catch (error) {
+      setRecommendedJobs([]);
+    } finally {
+      setRecommendationsLoading(false);
+    }
+  }
 
   async function loadWorkspace(user, token) {
     setCurrentUser(user);
     const applicationResponse = await fetch(`${API_URL}/users/${user.id}/applications`, { headers: { Authorization: `Bearer ${token}` } });
     if (applicationResponse.ok) setApplications(await applicationResponse.json());
     if (user.role === 'recruiter') {
+      setRecommendedJobs([]);
       const jobsResponse = await fetch(`${API_URL}/users/${user.id}/jobs`, { headers: { Authorization: `Bearer ${token}` } });
       if (jobsResponse.ok) setRecruiterJobs(await jobsResponse.json());
+      return;
     }
+
+    if (user.role === 'job_seeker') {
+      await loadRecommendations(token);
+      return;
+    }
+
+    setRecommendedJobs([]);
   }
 
   useEffect(() => {
@@ -59,6 +95,7 @@ export default function App() {
 
   const availableJobs = currentUser?.role === 'recruiter' ? recruiterJobs : jobs;
   const appliedJobIds = useMemo(() => new Set((applications || []).map((application) => application.job_id)), [applications]);
+  const recommendationSummary = buildRecommendedJobsSummary(recommendedJobs);
   const formatApplicationStatus = (status = '') => status
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -175,6 +212,51 @@ export default function App() {
       <section className="company-strip" id="companies"><span>People are growing at</span><strong>vertex</strong><strong>arc<span>/</span>labs</strong><strong>north<span>°</span>wind</strong><strong>monument</strong><strong>kinetic</strong></section>
       <section className="market-signals" aria-label="Northstar marketplace highlights"><div><span className="signal-number">01</span><strong>Search with intent</strong><p>Roles organized around the move you want to make next.</p></div><div><span className="signal-number">02</span><strong>Meet real teams</strong><p>Explore company, location, salary, and requirements upfront.</p></div><div><span className="signal-number">03</span><strong>Move with clarity</strong><p>Apply once your next role actually feels like a fit.</p></div></section>
       <section className="jobs-section" id="jobs"><div className="section-heading"><div><p className="eyebrow">{currentUser?.role === 'recruiter' ? 'Your recruiter workspace' : 'Curated for your next move'}</p><h2>{currentUser?.role === 'recruiter' ? <>Your posted <span>roles.</span></> : <>Find your <span>right now.</span></>}</h2></div><div className="jobs-heading-actions"><div className="role-tabs"><button className={listingType === 'all' ? 'active' : ''} onClick={() => setListingType('all')}>All roles</button><button className={listingType === 'internship' ? 'active' : ''} onClick={() => setListingType('internship')}>Internships</button></div><span className="result-count">{filteredJobs.length} opportunities</span></div></div><div className="job-layout"><aside className="filters"><strong>{currentUser?.role === 'recruiter' ? 'Your roles' : 'Refine results'}</strong><button onClick={() => { setQuery(''); setLocation(''); setShowSaved(false); setListingType('all'); }}>Clear all</button><hr /><p>Quick search</p>{currentUser?.role !== 'recruiter' && <button className={showSaved ? 'filter-active' : ''} onClick={() => setShowSaved(!showSaved)}><Check size={15} /> Saved jobs</button>}<div className="filter-tip"><Sparkles size={17} /><span><b>{currentUser?.role === 'recruiter' ? 'Need a new role?' : 'Not sure where to start?'}</b><br />{currentUser?.role === 'recruiter' ? 'Publish one from your workspace.' : 'Take a 2-minute career fit quiz.'}</span></div></aside><div className="job-list">{notice && <div className="notice">{notice}</div>}{filteredJobs.map((job, index) => <article className="job-card" key={job.id} onClick={() => setSelectedJob(job)}><div className={`company-logo logo-${index % 3}`}>{initials(job.company)}</div><div className="job-info"><h3>{job.title}</h3><p>{job.company} <span>·</span> {job.location}</p><div><span className="tag">{isInternship(job) ? 'Internship' : 'Full-time'}</span><span className="tag">{job.location.toLowerCase().includes('remote') ? 'Remote' : 'Hybrid'}</span></div></div><div className="job-meta">{currentUser?.role !== 'recruiter' && <button className="apply-button" onClick={(event) => { event.stopPropagation(); openApply(job); }} disabled={appliedJobIds.has(job.id)}>{appliedJobIds.has(job.id) ? 'Applied' : 'Apply'}</button>}<button aria-label="Save job" onClick={(event) => { event.stopPropagation(); toggleSaved(job.id); }} className={saved.includes(job.id) ? 'bookmark saved' : 'bookmark'}><Bookmark size={18} fill={saved.includes(job.id) ? 'currentColor' : 'none'} /></button><strong>{money(job.salary)}</strong><small>Posted recently</small></div></article>)}{!filteredJobs.length && <div className="empty"><BriefcaseBusiness size={28} /><h3>No roles found</h3><p>{currentUser?.role === 'recruiter' ? 'Publish your first role from the recruiter workspace.' : 'Try another keyword or clear your filters.'}</p></div>}</div></div></section>
+      {currentUser?.role === 'job_seeker' && (
+        <section className="ai-section" id="ai-matches">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow"><Sparkles size={14} /> AI job fit</p>
+              <h2>Your <span>best matches.</span></h2>
+            </div>
+            <button type="button" className="link-button compact-button" onClick={() => loadRecommendations(localStorage.getItem('northstar-token'))}>Refresh</button>
+          </div>
+
+          {recommendationsLoading ? (
+            <p className="muted">Finding your best-fit roles...</p>
+          ) : recommendedJobs.length ? (
+            <>
+              <div className="ai-summary-row">
+                <div className="ai-summary-card">
+                  <strong>{recommendationSummary.bestScore}%</strong>
+                  <span>Top match</span>
+                </div>
+                <div className="ai-summary-card">
+                  <strong>{recommendationSummary.count}</strong>
+                  <span>Roles matched</span>
+                </div>
+                <div className="ai-summary-card">
+                  <strong>{recommendationSummary.topMatch || '—'}</strong>
+                  <span>Best fit</span>
+                </div>
+              </div>
+              <div className="ai-grid">
+                {recommendedJobs.slice(0, 3).map((job) => (
+                  <div className="ai-card" key={`${job.job_id}-${job.title}`}>
+                    <span className="ai-badge">{job.match_percentage}% fit</span>
+                    <strong>{job.title}</strong>
+                    <p>{job.company}</p>
+                    <small>{job.location}</small>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="muted">Upload a PDF resume and apply once to unlock AI recommendations for your next role.</p>
+          )}
+        </section>
+      )}
+
       {currentUser?.role === 'job_seeker' && <section className="applications-section" id="applications"><div><p className="eyebrow"><UserRound size={14} /> Your workspace</p><h2>My applications</h2></div>{applications.length ? <div className="application-list">{applications.map((application) => <div className="application-row" key={application.id}><div><strong>{application.job_title || `Role #${application.job_id}`}</strong><p>{application.company || 'Company'} · {application.location || 'Location not specified'}</p></div><span>{formatApplicationStatus(application.status)}</span></div>)}</div> : <p className="muted">You have not applied to a role yet. Upload your resume to get started.</p>}</section>}
       {currentUser?.role === 'recruiter' && <section className="recruiter-section" id="recruiter"><div className="section-heading"><div><p className="eyebrow"><BriefcaseBusiness size={14} /> Recruiter workspace</p><h2>Build your <span>team.</span></h2></div><span className="result-count">{recruiterJobs.length} jobs posted</span></div><div className="recruiter-grid"><form className="job-form" onSubmit={createJob}><h3>Publish a role</h3><input placeholder="Job title (e.g. Backend Intern)" value={newJob.title} onChange={(event) => setNewJob({ ...newJob, title: event.target.value })} required /><input placeholder="Company" value={newJob.company} onChange={(event) => setNewJob({ ...newJob, company: event.target.value })} required /><input placeholder="Location or Remote" value={newJob.location} onChange={(event) => setNewJob({ ...newJob, location: event.target.value })} required /><input type="number" min="0" placeholder="Salary" value={newJob.salary} onChange={(event) => setNewJob({ ...newJob, salary: event.target.value })} required /><textarea placeholder="Describe the role, skills, experience, and internship duration" value={newJob.description} onChange={(event) => setNewJob({ ...newJob, description: event.target.value })} required /><button className="coral-button">Publish job <ArrowRight size={16} /></button></form><div className="recruiter-jobs"><h3>Your live roles</h3>{recruiterJobs.map((job) => <div className="recruiter-job" key={job.id}><div><strong>{job.title}</strong><p>{job.company} · {job.location}</p></div><button className="review-button" onClick={() => reviewApplications(job)}><Users size={15} /> Applicants</button></div>)}</div></div>{reviewingJob && <div className="applicant-panel"><div className="panel-heading"><div><p className="eyebrow">Applications for</p><h3>{reviewingJob.title}</h3></div><button className="close-panel" onClick={() => setReviewingJob(null)}><X size={18} /></button></div>{jobApplications.length ? jobApplications.map((application) => <div className="application-row" key={application.id}><div><strong>Application #{application.id}</strong><p>Candidate #{application.user_id}</p></div><select value={application.status} onChange={(event) => updateStatus(application.id, event.target.value)}><option value="applied">Applied</option><option value="shortlisted">Shortlisted</option><option value="interview">Interview</option><option value="selected">Selected</option><option value="rejected">Rejected</option></select></div>) : <p className="muted">No applications yet.</p>}</div>}</section>}
       <section className="quote" id="how-it-works"><img src="https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=1100&q=85" alt="Professional working on a laptop" /><div><span className="quote-mark">“</span><blockquote>Career growth isn't a ladder. It's the freedom to build a path that feels like your own.</blockquote><p>Northstar is for the curious, the restless, and the ready.</p><button className="dark-button" onClick={() => setLoginOpen(true)}>Explore your possibilities <ArrowRight size={16} /></button></div></section>

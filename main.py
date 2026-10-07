@@ -36,7 +36,14 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
     ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):(5173|5174|3000|4173)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -205,6 +212,25 @@ def get_users(
 ):
     if current_user.role != "recruiter":
         raise HTTPException(status_code=403, detail="Only recruiters can list users")
+
+    users = db.query(models.User).all()
+    return [
+        {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role
+        }
+        for user in users
+    ]
+
+@app.get("/admin/users")
+def get_admin_users(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can access the admin panel")
 
     users = db.query(models.User).all()
     return [
@@ -486,11 +512,57 @@ def get_applications(
         applications = db.query(models.Application).join(models.Job).filter(
             models.Job.recruiter_id == current_user.id
         ).all()
+    elif current_user.role == "admin":
+        applications = db.query(models.Application).all()
     else:
         applications = db.query(models.Application).filter(
             models.Application.user_id == current_user.id
         ).all()
     return applications
+
+@app.get("/admin/applications")
+def get_admin_applications(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can access the admin panel")
+
+    applications = db.query(models.Application).all()
+    return [
+        {
+            "id": application.id,
+            "name": application.user.name,
+            "email": application.user.email,
+            "job_title": application.job.title,
+            "status": application.status,
+            "job": {
+                "id": application.job.id,
+                "title": application.job.title,
+                "company": application.job.company,
+                "location": application.job.location,
+            },
+        }
+        for application in applications
+    ]
+
+@app.delete("/admin/users/{user_id}")
+def delete_admin_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can access the admin panel")
+
+    existing_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if existing_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db.delete(existing_user)
+    db.commit()
+
+    return {"message": "User deleted successfully"}
 
 def extract_resume_text(file_path):
     reader = PdfReader(file_path)
